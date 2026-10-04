@@ -7,6 +7,20 @@ from typing import Callable
 import numpy as np
 
 
+def velocity_verlet_step(
+    x: np.ndarray,
+    v: np.ndarray,
+    a: np.ndarray,
+    accel: Callable[[np.ndarray], np.ndarray],
+    dt: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One velocity-Verlet step. Returns x, v, a at the new time."""
+    x_new = x + v * dt + 0.5 * a * dt * dt
+    a_new = accel(x_new)
+    v_new = v + 0.5 * (a + a_new) * dt
+    return x_new, v_new, a_new
+
+
 def velocity_verlet(
     x0: np.ndarray,
     v0: np.ndarray,
@@ -22,10 +36,7 @@ def velocity_verlet(
     v[0] = v0
     a = accel(x[0])
     for i in range(n_steps):
-        x[i + 1] = x[i] + v[i] * dt + 0.5 * a * dt * dt
-        a_new = accel(x[i + 1])
-        v[i + 1] = v[i] + 0.5 * (a + a_new) * dt
-        a = a_new
+        x[i + 1], v[i + 1], a = velocity_verlet_step(x[i], v[i], a, accel, dt)
     return t, x, v
 
 
