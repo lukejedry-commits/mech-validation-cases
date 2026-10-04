@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mech-validation-cases live</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; background: #fff; color: #111; }
+  canvas { border: 1px solid #ccc; display: block; margin: 8px 0; background: #fff; }
+  button { margin-right: 8px; font-size: 16px; padding: 6px 12px; }
+  p { max-width: 720px; }
+</style>
+</head>
+<body>
+<h1>Live velocity Verlet</h1>
+<p>Open this file in a browser. No install and no port. Case A starts on its own. Stop, or close the tab, to end it. The timestep is fixed. It is not the time between frames.</p>
+<button id="btnA" type="button">Case A</button>
+<button id="btnB" type="button">Case B</button>
+<button id="btnStop" type="button">Stop</button>
+<p id="status"></p>
+<canvas id="c1" width="720" height="240"></canvas>
+<canvas id="c2" width="720" height="240"></canvas>
+<canvas id="c3" width="720" height="240"></canvas>
+<script>
+// Literal port of velocity_verlet_step in src/integrators.py:
+//   x_new = x + v * dt + 0.5 * a * dt * dt
+//   a_new = accel(x_new)
+//   v_new = v + 0.5 * (a + a_new) * dt
+// Vectors follow the same order as NumPy: every component of x_new, then accel, then every component of v_new.
+
+const K = 4;
+const M = 1;
+const DT_A = 0.01;
+const DT_B = 0.001;
+const STEPS_A = 4;
+const STEPS_B = 25;
+const E_TARGET = 2;
+const EPS_TARGET = -0.5;
+const H_TARGET = Math.sqrt(3) / 2;
+const T_A = Math.PI;
+const T_B = 2 * Math.PI;
+const WINDOW_PERIODS = 8;
+
+const c1 = document.getElementById("c1");
+const c2 = document.getElementById("c2");
+const c3 = document.getElementById("c3");
+const statusEl = document.getElementById("status");
+
+let running = false;
+let raf = 0;
+let mode = "A";
+let state = null;
+
+function accelA(x) {
+  return -(K / M) * x;
+}
+
+function accelB(r) {
+  const r2 = r[0] * r[0] + r[1] * r[1];
+  const r3 = r2 * Math.sqrt(r2);
+  return [-1 * r[0] / r3, -1 * r[1] / r3];
+}
+
+function stepScalar(x, v, a, dt, accel) {
+  const xNew = x + v * dt + 0.5 * a * dt * dt;
+  const aNew = accel(xNew);
+  const vNew = v + 0.5 * (a + aNew) * dt;
+  return [xNew, vNew, aNew];
+}
+
+function step2(r, v, a, dt, accel) {
+  const rNew = [
+    r[0] + v[0] * dt + 0.5 * a[0] * dt * dt,
+    r[1] + v[1] * dt + 0.5 * a[1] * dt * dt,
+  ];
+  const aNew = accel(rNew);
+  const vNew = [
+    v[0] + 0.5 * (a[0] + aNew[0]) * dt,
+    v[1] + 0.5 * (a[1] + aNew[1]) * dt,
+  ];
+  return [rNew, vNew, aNew];
+}
+
+function resetA() {
+  mode = "A";
+  const x = 1;
+  const v = 0;
+  const a = accelA(x);
+  state = {
+    x, v, a, t: 0,
+    ts: [0], xs: [x], Es: [0.5 * K * x * x + 0.5 * M * v * v],
+    cap: Math.floor(WINDOW_PERIODS * T_A / DT_A),
+  };
+  c3.style.display = "none";
+}
+
+function resetB() {
+  mode = "B";
+  const r = [0.5, 0];
+  const v = [0, Math.sqrt(3)];
+  const a = accelB(r);
+  const eps = 0.5 * (v[0] * v[0] + v[1] * v[1]) - 1 / Math.hypot(r[0], r[1]);
+  const h = r[0] * v[1] - r[1] * v[0];
+  state = {
+    r, v, a, t: 0,
+    ts: [0], eps: [eps], hs: [h], rx: [r[0]], ry: [r[1]],
+    cap: Math.floor(WINDOW_PERIODS * T_B / (DT_B * STEPS_B)),
+    trail: Math.floor(2 * T_B / (DT_B * STEPS_B)),
+  };
+  c3.style.display = "block";
+}
+
+function pushCap(arr, value, cap) {
+  arr.push(value);
+  if (arr.length > cap) arr.shift();
+}
+
+function stepAOnce() {
+  const s = state;
+  const next = stepScalar(s.x, s.v, s.a, DT_A, accelA);
+  s.x = next[0];
+  s.v = next[1];
+  s.a = next[2];
+  s.t += DT_A;
+  pushCap(s.ts, s.t, s.cap);
+  pushCap(s.xs, s.x, s.cap);
+  pushCap(s.Es, 0.5 * K * s.x * s.x + 0.5 * M * s.v * s.v, s.cap);
+}
+
+function stepBFrame() {
+  const s = state;
+  for (let i = 0; i < STEPS_B; i++) {
+    const next = step2(s.r, s.v, s.a, DT_B, accelB);
+    s.r = next[0];
+    s.v = next[1];
+    s.a = next[2];
+    s.t += DT_B;
+  }
+  const speed2 = s.v[0] * s.v[0] + s.v[1] * s.v[1];
+  const radius = Math.hypot(s.r[0], s.r[1]);
+  pushCap(s.ts, s.t, s.cap);
+  pushCap(s.eps, 0.5 * speed2 - 1 / radius, s.cap);
+  pushCap(s.hs, s.r[0] * s.v[1] - s.r[1] * s.v[0], s.cap);
+  pushCap(s.rx, s.r[0], s.trail);
+  pushCap(s.ry, s.r[1], s.trail);
+}
+
+function drawSeries(canvas, xs, ys, yMin, yMax, title, yLabel, hLine) {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  const pad = 48;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#222";
+  ctx.strokeRect(pad, 16, w - pad - 16, h - 16 - 32);
+  ctx.fillStyle = "#111";
+  ctx.font = "14px sans-serif";
+  ctx.fillText(title, pad, 14);
+  ctx.save();
+  ctx.translate(14, h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(yLabel, 0, 0);
+  ctx.restore();
+  const x0 = xs[0];
+  const x1 = xs[xs.length - 1];
+  const span = Math.max(x1 - x0, 1e-9);
+  function X(t) { return pad + (t - x0) / span * (w - pad - 16); }
+  function Y(y) { return 16 + (yMax - y) / (yMax - yMin) * (h - 16 - 32); }
+  if (hLine !== null) {
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = "#000";
+    ctx.beginPath();
+    ctx.moveTo(X(x0), Y(hLine));
+    ctx.lineTo(X(x1), Y(hLine));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.strokeStyle = "#1f77b4";
+  ctx.beginPath();
+  ctx.moveTo(X(xs[0]), Y(ys[0]));
+  for (let i = 1; i < xs.length; i++) ctx.lineTo(X(xs[i]), Y(ys[i]));
+  ctx.stroke();
+  ctx.fillStyle = "#333";
+  ctx.font = "12px sans-serif";
+  ctx.fillText(x0.toFixed(2), pad, h - 8);
+  ctx.fillText(x1.toFixed(2), w - 64, h - 8);
+  ctx.fillText(yMax.toFixed(2), 4, 28);
+  ctx.fillText(yMin.toFixed(2), 4, h - 36);
+}
+
+function drawOrbit() {
+  const canvas = c1;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "#111";
+  ctx.font = "14px sans-serif";
+  ctx.fillText("orbit", 8, 16);
+  const xMin = -2, xMax = 1, yMin = -1.2, yMax = 1.2;
+  function X(x) { return 40 + (x - xMin) / (xMax - xMin) * (w - 56); }
+  function Y(y) { return 28 + (yMax - y) / (yMax - yMin) * (h - 44); }
+  ctx.strokeStyle = "#222";
+  ctx.strokeRect(40, 28, w - 56, h - 44);
+  ctx.fillStyle = "#c90";
+  ctx.beginPath();
+  ctx.arc(X(0), Y(0), 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#1f77b4";
+  ctx.beginPath();
+  ctx.moveTo(X(state.rx[0]), Y(state.ry[0]));
+  for (let i = 1; i < state.rx.length; i++) ctx.lineTo(X(state.rx[i]), Y(state.ry[i]));
+  ctx.stroke();
+}
+
+function draw() {
+  if (mode === "A") {
+    drawSeries(c1, state.ts, state.xs, -1.3, 1.3, "Case A  x(t)", "x", null);
+    drawSeries(c2, state.ts, state.Es, 1.9, 2.1, "Case A  E(t)", "E", E_TARGET);
+    statusEl.textContent = "Case A   t = " + state.t.toFixed(3) + "   E = " + state.Es[state.Es.length - 1].toFixed(6);
+  } else {
+    drawOrbit();
+    drawSeries(c2, state.ts, state.eps, -0.55, -0.45, "Case B  ε(t)", "ε", EPS_TARGET);
+    drawSeries(c3, state.ts, state.hs, 0.8, 0.95, "Case B  h(t)", "h", H_TARGET);
+    statusEl.textContent = "Case B   t = " + state.t.toFixed(3)
+      + "   ε = " + state.eps[state.eps.length - 1].toFixed(6)
+      + "   h = " + state.hs[state.hs.length - 1].toFixed(6);
+  }
+}
+
+function loop() {
+  if (!running) return;
+  if (mode === "A") {
+    for (let i = 0; i < STEPS_A; i++) stepAOnce();
+  } else {
+    stepBFrame();
+  }
+  draw();
+  raf = requestAnimationFrame(loop);
+}
+
+function start(which) {
+  running = false;
+  cancelAnimationFrame(raf);
+  if (which === "A") resetA();
+  else resetB();
+  draw();
+  running = true;
+  raf = requestAnimationFrame(loop);
+}
+
+document.getElementById("btnA").addEventListener("click", function () { start("A"); });
+document.getElementById("btnB").addEventListener("click", function () { start("B"); });
+document.getElementById("btnStop").addEventListener("click", function () {
+  running = false;
+  cancelAnimationFrame(raf);
+  statusEl.textContent += "   stopped";
+});
+
+start("A");
+</script>
+</body>
+</html>

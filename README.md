@@ -15,17 +15,13 @@ Plots land in `plots/`. Exit code 0 means Verlet A/B pass and Euler-A fails cons
 
 ## Live viewer (runs until you stop it)
 
-Same velocity Verlet, same `dt` and initial conditions. Explicit Euler is not in this loop. The frozen checks stay on `python run_all.py`.
+One file, `live.html`. Open it in a browser. Nothing to install, and no port to forward. In Codespaces, download `live.html` and open that download in Chrome.
+
+Case A starts on its own. Use the buttons for Case A, Case B, or Stop. Closing the tab also stops it.
+
+Same velocity Verlet step as `src/integrators.py`, same `dt` (0.01 for A, 0.001 for B) and the same initial conditions. The frame gap is not the timestep. Explicit Euler is not on this page. The frozen checks stay on `python run_all.py`.
 
 The time axis shows the last 8 periods so the plot stays readable. The integration itself does not stop. A slow phase drift with flat energy is expected.
-
-```bash
-python run_live.py --case A
-python run_live.py --case B
-```
-
-Close the window or press Ctrl+C to stop. In Codespaces (no desktop), the plot opens in the browser and the editor will offer to forward the port.
-
 
 ## Spec (frozen)
 
